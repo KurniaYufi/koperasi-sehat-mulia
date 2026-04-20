@@ -34,23 +34,22 @@ class DraftDocumentController extends Controller
         ]);
 
         $file = $request->file('file');
+        
+        $uploadResult = $this->uploadToCloudinary($file);
 
-        $doc = DraftDocument::create([
+        if (!$uploadResult || !isset($uploadResult['secure_url'])) {
+            return back()->withErrors(['file' => 'Gagal mengunggah file ke Cloudinary.']);
+        }
+
+        DraftDocument::create([
             'name' => $request->name,
             'date' => $request->date,
             'file_original_name' => $file->getClientOriginalName(),
             'mime_type' => $file->getMimeType(),
             'size' => $file->getSize(),
+            'file_url' => $uploadResult['secure_url'],
+            'file_public_id' => $uploadResult['public_id'],
         ]);
-
-        $uploadResult = $this->uploadToCloudinary($file);
-
-        if ($uploadResult && isset($uploadResult['secure_url'])) {
-            $doc->update([
-                'file_url' => $uploadResult['secure_url'],
-                'file_public_id' => $uploadResult['public_id'],
-            ]);
-        }
 
         return redirect()->route('draft-documents.index')->with('success', 'Draft dokumen berhasil disimpan');
     }
@@ -77,10 +76,10 @@ class DraftDocumentController extends Controller
             'file' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
         ]);
 
-        $draftDocument->update([
+        $updateData = [
             'name' => $request->name,
             'date' => $request->date,
-        ]);
+        ];
 
         if ($request->hasFile('file')) {
             if ($draftDocument->file_public_id) {
@@ -91,15 +90,15 @@ class DraftDocumentController extends Controller
             $uploadResult = $this->uploadToCloudinary($file);
 
             if ($uploadResult && isset($uploadResult['secure_url'])) {
-                $draftDocument->update([
-                    'file_url' => $uploadResult['secure_url'],
-                    'file_public_id' => $uploadResult['public_id'],
-                    'file_original_name' => $file->getClientOriginalName(),
-                    'mime_type' => $file->getMimeType(),
-                    'size' => $file->getSize(),
-                ]);
+                $updateData['file_url'] = $uploadResult['secure_url'];
+                $updateData['file_public_id'] = $uploadResult['public_id'];
+                $updateData['file_original_name'] = $file->getClientOriginalName();
+                $updateData['mime_type'] = $file->getMimeType();
+                $updateData['size'] = $file->getSize();
             }
         }
+
+        $draftDocument->update($updateData);
 
         return redirect()->route('draft-documents.index')->with('success', 'Draft dokumen berhasil diperbarui');
     }
@@ -124,21 +123,15 @@ class DraftDocumentController extends Controller
         if (!$cloud || !$apiKey || !$apiSecret) return null;
 
         $mimeType = $file->getMimeType();
-        $isPdf = strpos($mimeType, 'pdf') !== false;
-        $resourceType = $isPdf ? 'image' : 'auto';
+        $resourceType = (strpos($mimeType, 'image') !== false || strpos($mimeType, 'pdf') !== false) ? 'image' : 'raw';
 
         $timestamp = time();
-
         $params = [
             'timestamp' => $timestamp,
         ];
 
         ksort($params);
-        $signString = "";
-        foreach ($params as $key => $value) {
-            $signString .= "$key=$value&";
-        }
-        $signString = rtrim($signString, "&") . $apiSecret;
+        $signString = "timestamp={$timestamp}{$apiSecret}";
         $signature = sha1($signString);
 
         $post = [
@@ -154,6 +147,7 @@ class DraftDocumentController extends Controller
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         $res = curl_exec($ch);
         curl_close($ch);
 
@@ -168,7 +162,7 @@ class DraftDocumentController extends Controller
 
         if (!($cloud && $apiKey && $apiSecret)) return false;
 
-        $resourceType = (strpos($mimeType, 'pdf') !== false || strpos($mimeType, 'image') !== false) ? 'image' : 'raw';
+        $resourceType = (strpos($mimeType, 'image') !== false || strpos($mimeType, 'pdf') !== false) ? 'image' : 'raw';
         $timestamp = time();
 
         $signString = "public_id={$publicId}&timestamp={$timestamp}{$apiSecret}";
@@ -187,6 +181,7 @@ class DraftDocumentController extends Controller
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         $res = curl_exec($ch);
         curl_close($ch);
 
